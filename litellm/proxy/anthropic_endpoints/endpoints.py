@@ -31,6 +31,14 @@ async def anthropic_response(  # noqa: PLR0915
     request: Request,
     user_api_key_dict: UserAPIKeyAuth = Depends(user_api_key_auth),
 ):
+    # HIGH VISIBILITY DEBUG: Capture what Claude Code SDK sends
+    print(f"[CLAUDE CODE DEBUG] /v1/messages endpoint called")
+    print(f"[CLAUDE CODE DEBUG] Request method: {request.method}")
+    print(f"[CLAUDE CODE DEBUG] Request URL: {request.url}")
+    print(f"[CLAUDE CODE DEBUG] Raw headers: {dict(request.headers)}")
+    print(f"[CLAUDE CODE DEBUG] Authorization header: {request.headers.get('authorization', 'NOT FOUND')}")
+    print(f"[CLAUDE CODE DEBUG] User agent: {request.headers.get('user-agent', 'NOT FOUND')}")
+    print(f"[CLAUDE CODE DEBUG] Content type: {request.headers.get('content-type', 'NOT FOUND')}")
     """
     Use `{PROXY_BASE_URL}/anthropic/v1/messages` instead - [Docs](https://docs.litellm.ai/docs/anthropic_completion).
 

@@ -94,6 +94,69 @@ class AnthropicModelInfo(BaseLLMModelInfo):
             return None
         return anthropic_beta_header.split(",")
 
+    @staticmethod
+    def detect_oauth_token(auth_header: str) -> bool:
+        """Detect if authorization header contains OAuth token vs API key"""
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        logger.info(f"[OAuth Debug] detect_oauth_token called with header: {auth_header[:50]}...")
+        
+        if not auth_header.startswith("Bearer "):
+            logger.info(f"[OAuth Debug] Header does not start with 'Bearer ', returning False")
+            return False
+            
+        token = auth_header.replace("Bearer ", "")
+        is_oauth = token.startswith("sk-ant-oat")
+        
+        logger.info(f"[OAuth Debug] Token starts with: {token[:15]}...")
+        logger.info(f"[OAuth Debug] Is OAuth token: {is_oauth}")
+        
+        return is_oauth
+
+    @staticmethod
+    def extract_oauth_from_request(request_headers: dict, litellm_params: dict) -> Optional[str]:
+        """Extract OAuth token from request headers if pass-through enabled"""
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        logger.info(f"[OAuth Debug] extract_oauth_from_request called")
+        logger.info(f"[OAuth Debug] Headers keys: {list(request_headers.keys())}")
+        logger.info(f"[OAuth Debug] oauth_pass_through: {litellm_params.get('oauth_pass_through', False)}")
+        
+        if not litellm_params.get("oauth_pass_through", False):
+            logger.info(f"[OAuth Debug] oauth_pass_through is False, returning None")
+            return None
+            
+        # Handle case-insensitive header lookup
+        auth_header = request_headers.get("authorization") or request_headers.get("Authorization", "")
+        logger.info(f"[OAuth Debug] Found auth header: {auth_header[:50] if auth_header else 'None'}...")
+        
+        if AnthropicModelInfo.detect_oauth_token(auth_header):
+            token = auth_header.replace("Bearer ", "")
+            logger.info(f"[OAuth Debug] Extracted OAuth token: {token[:15]}...")
+            return token
+            
+        logger.info(f"[OAuth Debug] No OAuth token detected, returning None")
+        return None
+
+    @staticmethod
+    def load_oauth_token_from_file(file_path: str) -> Optional[str]:
+        """Load OAuth token from credentials file created by get-token.ts"""
+        try:
+            import json
+            import time
+            with open(file_path, 'r') as f:
+                credentials = json.load(f)
+            
+            # Check if token is expired (expiresAt is in milliseconds)
+            if credentials.get("expiresAt", 0) < time.time() * 1000:
+                return None
+                
+            return credentials.get("accessToken")
+        except Exception:
+            return None
+
     def get_anthropic_headers(
         self,
         api_key: str,
@@ -105,6 +168,7 @@ class AnthropicModelInfo(BaseLLMModelInfo):
         mcp_server_used: bool = False,
         is_vertex_request: bool = False,
         user_anthropic_beta_headers: Optional[List[str]] = None,
+        oauth_token: Optional[str] = None,
     ) -> dict:
         betas = set()
         if prompt_caching_set:
@@ -121,10 +185,23 @@ class AnthropicModelInfo(BaseLLMModelInfo):
 
         headers = {
             "anthropic-version": anthropic_version or "2023-06-01",
-            "x-api-key": api_key,
             "accept": "application/json",
             "content-type": "application/json",
         }
+
+        # OAuth authentication vs API key authentication
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        if oauth_token:
+            logger.info(f"[OAuth Debug] Using OAuth authentication with token: {oauth_token[:15]}...")
+            headers["authorization"] = f"Bearer {oauth_token}"
+            # Add OAuth beta headers from OpenCode research
+            betas.update({"oauth-2025-04-20", "claude-code-20250219", "interleaved-thinking-2025-05-14", "fine-grained-tool-streaming-2025-05-14"})
+        else:
+            logger.info(f"[OAuth Debug] Using API key authentication with key: {api_key[:15] if api_key else 'None'}...")
+            # Existing API key authentication
+            headers["x-api-key"] = api_key
 
         if user_anthropic_beta_headers is not None:
             betas.update(user_anthropic_beta_headers)
@@ -147,7 +224,24 @@ class AnthropicModelInfo(BaseLLMModelInfo):
         api_key: Optional[str] = None,
         api_base: Optional[str] = None,
     ) -> Dict:
-        if api_key is None:
+        # OAuth authentication logic
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        oauth_token = None
+        logger.info(f"[OAuth Debug] validate_environment called for model: {model}")
+        
+        # Case 3: OAuth pass-through (no master key, client sends OAuth token)
+        oauth_token = self.extract_oauth_from_request(headers, litellm_params)
+        logger.info(f"[OAuth Debug] Case 3 - OAuth from request: {'Found' if oauth_token else 'None'}")
+        
+        # Case 4: OAuth from file (with master key, LiteLLM manages OAuth)
+        if oauth_token is None and litellm_params.get("oauth_token_file"):
+            oauth_token = self.load_oauth_token_from_file(litellm_params["oauth_token_file"])
+            logger.info(f"[OAuth Debug] Case 4 - OAuth from file: {'Found' if oauth_token else 'None'}")
+        
+        # Fallback to API key authentication (Cases 1&2 and OAuth fallback)
+        if oauth_token is None and api_key is None:
             raise litellm.AuthenticationError(
                 message="Missing Anthropic API Key - A call is being made to anthropic but no key is set either in the environment variables or via params. Please set `ANTHROPIC_API_KEY` in your environment vars",
                 llm_provider="anthropic",
@@ -169,11 +263,12 @@ class AnthropicModelInfo(BaseLLMModelInfo):
             computer_tool_used=computer_tool_used,
             prompt_caching_set=prompt_caching_set,
             pdf_used=pdf_used,
-            api_key=api_key,
+            api_key=api_key or "",  # Provide empty string if None to avoid errors
             file_id_used=file_id_used,
             is_vertex_request=optional_params.get("is_vertex_request", False),
             user_anthropic_beta_headers=user_anthropic_beta_headers,
             mcp_server_used=mcp_server_used,
+            oauth_token=oauth_token,
         )
 
         headers = {**headers, **anthropic_headers}

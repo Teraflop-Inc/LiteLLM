@@ -358,6 +358,37 @@ async def _user_api_key_auth_builder(  # noqa: PLR0915
     request_data: dict,
     custom_litellm_key_header: Optional[str] = None,
 ) -> UserAPIKeyAuth:
+    # HIGH VISIBILITY OAUTH DEBUG: Check for OAuth at the authentication layer
+    print(f"[AUTH OAUTH DEBUG] _user_api_key_auth_builder called")
+    print(f"[AUTH OAUTH DEBUG] Request URL: {request.url}")
+    print(f"[AUTH OAUTH DEBUG] Request headers: {dict(request.headers)}")
+    auth_header = request.headers.get("authorization", "")
+    print(f"[AUTH OAUTH DEBUG] Authorization header: {auth_header[:50]}..." if auth_header else "[AUTH OAUTH DEBUG] No Authorization header")
+    
+    # Check if this is a request that should use OAuth pass-through
+    route = get_request_route(request=request)
+    print(f"[AUTH OAUTH DEBUG] Route: {route}")
+    
+    # For /v1/messages endpoint, check if OAuth pass-through should be used
+    if "/v1/messages" in route and auth_header.startswith("Bearer "):
+        token = auth_header.replace("Bearer ", "")
+        print(f"[AUTH OAUTH DEBUG] Checking token format: {token[:15]}...")
+        
+        # Detect OAuth token format (sk-ant-oat01-...)
+        if token.startswith("sk-ant-oat"):
+            print(f"[AUTH OAUTH DEBUG] OAuth token detected! Creating pass-through auth")
+            # Create a special UserAPIKeyAuth for OAuth pass-through
+            # We'll mark this with a special flag so downstream components know to use OAuth
+            oauth_auth = UserAPIKeyAuth(
+                api_key=token,  # Store the OAuth token
+                user_id="oauth-user",
+                user_role="proxy_admin",  # Give sufficient permissions for OAuth
+                user_email="oauth@claude-code.ai",
+            )
+            # Add OAuth marker for downstream detection
+            oauth_auth.metadata = {"oauth_pass_through": True, "oauth_token": token}
+            print(f"[AUTH OAUTH DEBUG] Created OAuth UserAPIKeyAuth with token: {token[:15]}...")
+            return oauth_auth
     from litellm.proxy.proxy_server import (
         general_settings,
         jwt_handler,
