@@ -836,6 +836,37 @@ async def add_litellm_data_to_request(  # noqa: PLR0915
         user_api_key_dict=user_api_key_dict,
     )
 
+    # OAuth Pass-through Support
+    # If user_api_key_dict contains an OAuth token in metadata and oauth_pass_through is enabled,
+    # pass the OAuth token as the api_key parameter
+    verbose_proxy_logger.debug(
+        "[OAUTH] Checking for OAuth pass-through. user_api_key_dict metadata: %s",
+        getattr(user_api_key_dict, 'metadata', {}) if user_api_key_dict else None
+    )
+    
+    if (
+        user_api_key_dict
+        and hasattr(user_api_key_dict, 'metadata') 
+        and user_api_key_dict.metadata 
+        and user_api_key_dict.metadata.get('oauth_pass_through') 
+        and user_api_key_dict.metadata.get('oauth_token')
+    ):
+        oauth_token = user_api_key_dict.metadata.get('oauth_token')
+        verbose_proxy_logger.debug(
+            "[OAUTH] OAuth pass-through detected! Passing OAuth token as api_key: %s...",
+            oauth_token[:20] if oauth_token else "None"
+        )
+        data['api_key'] = oauth_token
+        
+        # Also ensure litellm_params gets the oauth_pass_through flag
+        if 'litellm_params' not in data:
+            data['litellm_params'] = {}
+        data['litellm_params']['oauth_pass_through'] = True
+    else:
+        verbose_proxy_logger.debug(
+            "[OAUTH] No OAuth pass-through detected or token not found in metadata"
+        )
+    
     verbose_proxy_logger.debug(
         "[PROXY] returned data from litellm_pre_call_utils: %s", data
     )

@@ -140,23 +140,6 @@ class AnthropicModelInfo(BaseLLMModelInfo):
         logger.info(f"[OAuth Debug] No OAuth token detected, returning None")
         return None
 
-    @staticmethod
-    def load_oauth_token_from_file(file_path: str) -> Optional[str]:
-        """Load OAuth token from credentials file created by get-token.ts"""
-        try:
-            import json
-            import time
-            with open(file_path, 'r') as f:
-                credentials = json.load(f)
-            
-            # Check if token is expired (expiresAt is in milliseconds)
-            if credentials.get("expiresAt", 0) < time.time() * 1000:
-                return None
-                
-            return credentials.get("accessToken")
-        except Exception:
-            return None
-
     def get_anthropic_headers(
         self,
         api_key: str,
@@ -224,23 +207,18 @@ class AnthropicModelInfo(BaseLLMModelInfo):
         api_key: Optional[str] = None,
         api_base: Optional[str] = None,
     ) -> Dict:
-        # OAuth authentication logic
+        # SIMPLIFIED OAuth authentication logic
         import logging
         logger = logging.getLogger(__name__)
         
         oauth_token = None
         logger.info(f"[OAuth Debug] validate_environment called for model: {model}")
         
-        # Case 3: OAuth pass-through (no master key, client sends OAuth token)
+        # Pure OAuth pass-through - extract token from request headers if enabled
         oauth_token = self.extract_oauth_from_request(headers, litellm_params)
-        logger.info(f"[OAuth Debug] Case 3 - OAuth from request: {'Found' if oauth_token else 'None'}")
+        logger.info(f"[OAuth Debug] OAuth from request: {'Found' if oauth_token else 'None'}")
         
-        # Case 4: OAuth from file (with master key, LiteLLM manages OAuth)
-        if oauth_token is None and litellm_params.get("oauth_token_file"):
-            oauth_token = self.load_oauth_token_from_file(litellm_params["oauth_token_file"])
-            logger.info(f"[OAuth Debug] Case 4 - OAuth from file: {'Found' if oauth_token else 'None'}")
-        
-        # Fallback to API key authentication (Cases 1&2 and OAuth fallback)
+        # Fallback to API key authentication
         if oauth_token is None and api_key is None:
             raise litellm.AuthenticationError(
                 message="Missing Anthropic API Key - A call is being made to anthropic but no key is set either in the environment variables or via params. Please set `ANTHROPIC_API_KEY` in your environment vars",
