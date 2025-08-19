@@ -314,6 +314,8 @@ class AnthropicChatCompletion(BaseLLM):
         stream = optional_params.pop("stream", None)
         json_mode: bool = optional_params.pop("json_mode", False)
         is_vertex_request: bool = optional_params.pop("is_vertex_request", False)
+        # Remove internal LiteLLM params that shouldn't be sent to Anthropic
+        optional_params.pop("oauth_pass_through", None)
         _is_function_call = False
         messages = copy.deepcopy(messages)
         headers = AnthropicConfig().validate_environment(
