@@ -84,14 +84,21 @@ class AnthropicMessagesConfig(BaseAnthropicMessagesConfig):
                 print(f"[OAUTH DEBUG] Using OAuth token from api_key parameter: {oauth_token[:20]}...")
             else:
                 # Fallback: Check litellm_params for the token
+                # First check for oauth_token (from router fix)
+                oauth_token_from_params = litellm_params.get("oauth_token")
                 api_key_from_params = litellm_params.get("api_key")
-                if api_key_from_params and api_key_from_params.startswith("sk-ant-oat"):
+                
+                if oauth_token_from_params:
+                    oauth_token = oauth_token_from_params
+                    print(f"[OAUTH DEBUG] Using OAuth token from litellm_params.oauth_token: {oauth_token[:20]}...")
+                elif api_key_from_params and api_key_from_params.startswith("sk-ant-oat"):
                     oauth_token = api_key_from_params
-                    print(f"[OAUTH DEBUG] Using OAuth token from litellm_params: {oauth_token[:20]}...")
+                    print(f"[OAUTH DEBUG] Using OAuth token from litellm_params.api_key: {oauth_token[:20]}...")
                 else:
                     print(f"[OAUTH DEBUG] WARNING: OAuth pass-through enabled but no OAuth token found!")
                     print(f"[OAUTH DEBUG] api_key: {api_key[:20] if api_key else 'None'}...")
                     print(f"[OAUTH DEBUG] litellm_params.api_key: {api_key_from_params[:20] if api_key_from_params else 'None'}...")
+                    print(f"[OAUTH DEBUG] litellm_params.oauth_token: {oauth_token_from_params[:20] if oauth_token_from_params else 'None'}...")
 
         # Set authentication headers
         if oauth_token:

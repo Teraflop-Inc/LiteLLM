@@ -2742,6 +2742,18 @@ class Router:
             model_name = data["model"]
             self.total_calls[model_name] += 1
 
+            # Merge OAuth params from kwargs if present
+            if "litellm_params" in kwargs and isinstance(kwargs["litellm_params"], dict):
+                # Preserve OAuth params from kwargs
+                oauth_params = kwargs["litellm_params"]
+                if oauth_params.get("oauth_pass_through"):
+                    data["oauth_pass_through"] = oauth_params["oauth_pass_through"]
+                if oauth_params.get("oauth_token"):
+                    data["oauth_token"] = oauth_params["oauth_token"]
+                # Remove litellm_params from kwargs to avoid duplication
+                kwargs = kwargs.copy()
+                kwargs.pop("litellm_params", None)
+
             ### get custom
             response = original_generic_function(
                 **{

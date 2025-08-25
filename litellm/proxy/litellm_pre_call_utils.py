@@ -853,15 +853,22 @@ async def add_litellm_data_to_request(  # noqa: PLR0915
     ):
         oauth_token = user_api_key_dict.metadata.get('oauth_token')
         verbose_proxy_logger.debug(
-            "[OAUTH] OAuth pass-through detected! Passing OAuth token as api_key: %s...",
+            "[OAUTH] OAuth pass-through detected! Passing OAuth token in litellm_params: %s...",
             oauth_token[:20] if oauth_token else "None"
         )
-        data['api_key'] = oauth_token
         
-        # Also ensure litellm_params gets the oauth_pass_through flag
+        # Pass OAuth token through litellm_params instead of api_key
+        # This allows the Anthropic handler to use Authorization header instead of x-api-key
         if 'litellm_params' not in data:
             data['litellm_params'] = {}
         data['litellm_params']['oauth_pass_through'] = True
+        data['litellm_params']['oauth_token'] = oauth_token
+        
+        # Don't set api_key when using OAuth - let it fall back to config
+        # This prevents the OAuth token from being used as x-api-key
+        verbose_proxy_logger.debug(
+            "[OAUTH] OAuth token set in litellm_params, will use Authorization header"
+        )
     else:
         verbose_proxy_logger.debug(
             "[OAUTH] No OAuth pass-through detected or token not found in metadata"
