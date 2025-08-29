@@ -1,0 +1,210 @@
+name: Build OAuth-Fix Multi-Architecture Docker Image
+
+on:
+  # Manual workflow dispatch
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "The tag version you want to build"
+        required: true
+        default: "latest"
+      push_to_registry:
+        description: "Push to Docker Hub registry"
+        type: boolean
+        default: true
+
+  # Auto-build on main branch changes
+  push:
+    branches:
+      - main
+    paths:
+      - 'docker/**'
+      - 'litellm/**'
+      - 'Dockerfile'
+      - 'requirements.txt'
+      - '.github/workflows/build-oauth-fix-multiarch.yml'
+
+  # Auto-build on releases
+  release:
+    types: [published, created]
+
+  # Test builds on PRs (without pushing)
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'docker/**'
+      - 'litellm/**'
+      - 'Dockerfile'
+      - 'requirements.txt'
+      - '.github/workflows/build-oauth-fix-multiarch.yml'
+
+
+env:
+  REGISTRY: docker.io
+  IMAGE_NAME: aowen14/litellm-oauth-fix
+
+jobs:
+  build-multi-arch:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for better caching
+          
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver-opts: network=host
+          
+      - name: Log in to Docker Hub
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          
+      - name: Determine version tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            # Manual dispatch tag
+            type=raw,value=${{ github.event.inputs.tag }},enable={{is_default_branch}}
+            
+            # Latest tag for main branch
+            type=raw,value=latest,enable={{is_default_branch}}
+            
+            # Version tags for releases
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            
+            # SHA for main branch commits
+            type=sha,prefix=sha-,suffix=,format=short,enable={{is_default_branch}}
+            
+            
+            # PR tags for testing
+            type=ref,event=pr,suffix=-test
+            
+          labels: |
+            org.opencontainers.image.title=LiteLLM OAuth Fix
+            org.opencontainers.image.description=Multi-architecture LiteLLM proxy with OAuth passthrough support
+            org.opencontainers.image.vendor=Dev-Agent-Lens
+            org.opencontainers.image.licenses=MIT
+            
+      - name: Build and push multi-arch Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            BUILDTIME=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.created'] }}
+            VERSION=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.version'] }}
+          
+      - name: Test multi-arch image (PR only)
+        if: github.event_name == 'pull_request'
+        run: |
+          echo "🧪 Testing multi-arch build (dry-run mode)"
+          docker buildx build \
+            --platform linux/amd64,linux/arm64 \
+            --tag test-multiarch:latest \
+            --file ./Dockerfile \
+            --progress=plain \
+            .
+            
+      - name: Verify multi-arch support
+        if: github.event_name != 'pull_request'
+        run: |
+          echo "🔍 Verifying multi-arch manifest..."
+          
+          # Wait a moment for manifest to be available
+          sleep 10
+          
+          # Check manifest
+          docker buildx imagetools inspect ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          
+          # Test both architectures work
+          echo "✅ Testing AMD64 image..."
+          docker run --rm --platform linux/amd64 ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest --help > /dev/null
+          
+          echo "✅ Testing ARM64 image..."  
+          docker run --rm --platform linux/arm64 ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest --help > /dev/null
+          
+          echo "🎉 Multi-architecture verification successful!"
+          
+        
+      - name: Security scan
+        if: github.event_name != 'pull_request'
+        uses: docker/scout-action@v1
+        with:
+          command: cves
+          image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          only-severities: critical,high
+          exit-code: false  # Don't fail the build on vulnerabilities
+        continue-on-error: true
+          
+      - name: Create build summary
+        run: |
+          echo "## 🐳 Multi-Architecture Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| **Build Status** | ✅ Success |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Platforms** | linux/amd64, linux/arm64 |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Registry** | ${{ env.REGISTRY }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Image** | ${{ env.IMAGE_NAME }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Trigger** | ${{ github.event_name }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          echo "### 🏷️ Generated Tags" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "${{ steps.meta.outputs.tags }}" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "### ✅ Deployment Status" >> $GITHUB_STEP_SUMMARY
+            echo "- 📦 **Registry**: Images pushed successfully" >> $GITHUB_STEP_SUMMARY
+            echo "- 🔍 **Verification**: Multi-arch manifest verified" >> $GITHUB_STEP_SUMMARY
+            echo "- 🧪 **Testing**: Both AMD64 and ARM64 images tested" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "### 🧪 Test Build Status" >> $GITHUB_STEP_SUMMARY
+            echo "- 📋 **Mode**: Test build only (not pushed to registry)" >> $GITHUB_STEP_SUMMARY
+            echo "- ✅ **Result**: Multi-arch build successful" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📋 Next Steps" >> $GITHUB_STEP_SUMMARY
+          echo "1. **Test the image**: \`docker run --rm ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest --help\`" >> $GITHUB_STEP_SUMMARY
+          echo "2. **Verify platforms**: \`docker buildx imagetools inspect ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest\`" >> $GITHUB_STEP_SUMMARY
+          echo "3. **Update docker-compose**: Ensure docker-compose.yml uses the latest image" >> $GITHUB_STEP_SUMMARY
+          echo "4. **Deploy and test**: Test deployment on both AMD64 and ARM64 systems" >> $GITHUB_STEP_SUMMARY
+
+  # Separate job for notifications (optional)
+  notify:
+    needs: [build-multi-arch]
+    runs-on: ubuntu-latest
+    if: failure() && github.event_name != 'pull_request'
+    steps:
+      - name: Notify on failure
+        run: |
+          echo "🚨 Multi-arch build failed!"
+          echo "Check the build logs and resolve any issues."
+          # Add webhook notification here if needed
