@@ -152,7 +152,7 @@ jobs:
         
       - name: Security scan
         if: github.event_name != 'pull_request'
-        uses: docker/scout-action@v1
+        uses: docker/scout-action@v1.18.0
         with:
           command: cves
           image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
