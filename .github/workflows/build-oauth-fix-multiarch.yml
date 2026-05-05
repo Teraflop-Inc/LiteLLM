@@ -79,8 +79,8 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            # Manual dispatch tag
-            type=raw,value=${{ github.event.inputs.tag }},enable={{is_default_branch}}
+            # Manual dispatch tag (also allow when dispatching from feature branches)
+            type=raw,value=${{ github.event.inputs.tag }},enable=${{ github.event_name == 'workflow_dispatch' }}
             
             # Latest tag for main branch
             type=raw,value=latest,enable={{is_default_branch}}
