@@ -12,6 +12,10 @@ on:
         description: "Push to Docker Hub registry"
         type: boolean
         default: true
+      platforms:
+        description: "Comma-separated platform list (linux/amd64, linux/arm64, or both)"
+        required: false
+        default: "linux/amd64,linux/arm64"
 
   # Auto-build on main branch changes
   push:
@@ -79,8 +83,8 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            # Manual dispatch tag
-            type=raw,value=${{ github.event.inputs.tag }},enable={{is_default_branch}}
+            # Manual dispatch tag (also allow when dispatching from feature branches)
+            type=raw,value=${{ github.event.inputs.tag }},enable=${{ github.event_name == 'workflow_dispatch' }}
             
             # Latest tag for main branch
             type=raw,value=latest,enable={{is_default_branch}}
@@ -108,7 +112,7 @@ jobs:
         with:
           context: .
           file: ./Dockerfile
-          platforms: linux/amd64,linux/arm64
+          platforms: ${{ github.event.inputs.platforms || 'linux/amd64,linux/arm64' }}
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

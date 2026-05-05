@@ -197,8 +197,15 @@ def handle_anthropic_claude_code_tracing(
 
     span_definitions: List[Tuple[str, Dict[str, Any], str]] = []
 
+    # ENG2-1036: emit child spans only for the latest turn, not the full history.
+    # Each of the three loops below previously walked all of `messages` from i=0,
+    # producing O(L) child spans per call and O(L²) child spans per session.
+    # Starting from the tail caps each loop at one or two iterations, keeping the
+    # latest-turn detail Phoenix users want without re-emitting prior history.
+    start_idx = max(0, len(messages) - 2)
+
     # Build internal prompt span data
-    i = 0
+    i = start_idx
     span_index = 0
     while i < len(messages):
         role = messages[i].get("role", "")
@@ -228,7 +235,7 @@ def handle_anthropic_claude_code_tracing(
         span_index += 1
 
     # Build internal tool span data
-    i = 0
+    i = start_idx
     span_index = 0
     while i < len(messages):
         role = messages[i].get("role", "")
@@ -254,7 +261,7 @@ def handle_anthropic_claude_code_tracing(
         span_index += 1
 
     # Build individual tool span data
-    i = 0
+    i = start_idx
     while i < len(messages):
         role = messages[i].get("role", "")
         content = messages[i].get("content", "")
@@ -439,19 +446,22 @@ def set_attributes(span: Span, kwargs, response_obj):  # noqa: PLR0915
                 last_message.get("content", ""),
             )
 
-            # LLM_INPUT_MESSAGES shows up under `input_messages` tab on the span page.
-            for idx, msg in enumerate(messages):
-                prefix = f"{SpanAttributes.LLM_INPUT_MESSAGES}.{idx}"
-                # Set the role per message.
-                safe_set_attribute(
-                    span, f"{prefix}.{MessageAttributes.MESSAGE_ROLE}", msg.get("role")
-                )
-                # Set the content per message.
-                safe_set_attribute(
-                    span,
-                    f"{prefix}.{MessageAttributes.MESSAGE_CONTENT}",
-                    msg.get("content", ""),
-                )
+            # ENG2-1036: emit only the LAST message as an llm.input_messages.* attribute.
+            # Previously we attached all N prior messages on every span, producing O(L²)
+            # bytes per session. The most recent turn is sufficient for span-page detail;
+            # full history reconstruction belongs in DAL post-ingest, not on every span.
+            last_idx = len(messages) - 1
+            prefix = f"{SpanAttributes.LLM_INPUT_MESSAGES}.{last_idx}"
+            safe_set_attribute(
+                span,
+                f"{prefix}.{MessageAttributes.MESSAGE_ROLE}",
+                last_message.get("role"),
+            )
+            safe_set_attribute(
+                span,
+                f"{prefix}.{MessageAttributes.MESSAGE_CONTENT}",
+                last_message.get("content", ""),
+            )
 
         # Capture tools (function definitions) used in the LLM call.
         tools = optional_params.get("tools")
