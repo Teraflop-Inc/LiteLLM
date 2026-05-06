@@ -450,8 +450,15 @@ def set_attributes(span: Span, kwargs, response_obj):  # noqa: PLR0915
             # Previously we attached all N prior messages on every span, producing O(L²)
             # bytes per session. The most recent turn is sufficient for span-page detail;
             # full history reconstruction belongs in DAL post-ingest, not on every span.
-            last_idx = len(messages) - 1
-            prefix = f"{SpanAttributes.LLM_INPUT_MESSAGES}.{last_idx}"
+            #
+            # Use index 0 (not len(messages)-1) for the single emitted message:
+            # OpenInference consumers expect contiguous 0-based indices when reading
+            # arrays-as-prefixed-attributes. A non-zero sole index (e.g. ".10.role" with
+            # no ".0.role" present) can be silently dropped or misaligned by some
+            # consumers — Phoenix happens to normalize on read, but we shouldn't rely
+            # on that. The "position in conversation" meaning is moot anyway since
+            # we're emitting only one message.
+            prefix = f"{SpanAttributes.LLM_INPUT_MESSAGES}.0"
             safe_set_attribute(
                 span,
                 f"{prefix}.{MessageAttributes.MESSAGE_ROLE}",
