@@ -17,10 +17,13 @@ on:
         required: false
         default: "linux/amd64,linux/arm64"
 
-  # Auto-build on main branch changes
+  # Auto-build on default-branch changes (the fork has NO `main` — 
+  # oauth-passthrough-support is the default/deploy branch; the old
+  # `main` trigger pointed at a branch that doesn't exist, so merges
+  # never rebuilt :latest — ENG2-1461 shipped stale because of it)
   push:
     branches:
-      - main
+      - oauth-passthrough-support
     paths:
       - 'docker/**'
       - 'litellm/**'
@@ -35,7 +38,7 @@ on:
   # Test builds on PRs (without pushing)
   pull_request:
     branches:
-      - main
+      - oauth-passthrough-support
     paths:
       - 'docker/**'
       - 'litellm/**'
