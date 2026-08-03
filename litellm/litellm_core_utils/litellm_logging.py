@@ -3335,7 +3335,19 @@ def _init_custom_logger_compatible_class(  # noqa: PLR0915
                 ):
                     return callback  # type: ignore
             _otel_logger = OpenTelemetry(
-                config=otel_config, callback_name="arize_phoenix"
+                config=otel_config,
+                callback_name="arize_phoenix",
+                # ENG2-1461: forward callback_settings (like the "otel" branch
+                # below) so `callback_settings: arize_phoenix: message_logging:
+                # false` can disable the raw-request child span. That span dumps
+                # the FULL request (messages + tools + system) as
+                # llm.<provider>.* on every call — the O(L²) storage bleed
+                # ENG2-1036 fixed in arize/_utils.py but which survived here in
+                # the OTEL base class. Span 1 (set_arize_phoenix_attributes)
+                # still captures latest-turn content.
+                **_get_custom_logger_settings_from_proxy_server(
+                    callback_name="arize_phoenix"
+                ),
             )
             _in_memory_loggers.append(_otel_logger)
             return _otel_logger  # type: ignore
