@@ -181,6 +181,83 @@ def test_arize_set_attributes():
     span.set_attribute.assert_any_call(SpanAttributes.LLM_TOKEN_COUNT_PROMPT, 40)
 
 
+def test_arize_invocation_parameters_strips_tool_schemas():
+    """
+    ENG2-1476: model_parameters carrying a fat tools schema (the Claude Code /
+    MCP case, ~500KB identical on every call) must NOT be dumped into
+    llm.invocation_parameters. The tools/functions keys are stripped and
+    replaced with counts; all other invocation params are preserved.
+    """
+    from unittest.mock import MagicMock
+
+    from litellm.types.utils import ModelResponse
+
+    span = MagicMock()
+
+    # Anthropic-format tools (top-level name/input_schema, no "function"
+    # wrapper), padded to be measurably large like a real MCP tools blob.
+    fat_tools = [
+        {
+            "name": f"tool_{i}",
+            "description": "x" * 2000,
+            "input_schema": {
+                "type": "object",
+                "properties": {f"param_{j}": {"type": "string", "description": "y" * 200} for j in range(10)},
+            },
+        }
+        for i in range(50)
+    ]
+    assert len(json.dumps(fat_tools)) > 100_000  # test-fixture sanity
+
+    kwargs = {
+        "model": "claude-opus-4-8",
+        "messages": [{"role": "user", "content": "hi"}],
+        "standard_logging_object": {
+            "model_parameters": {
+                "max_tokens": 64000,
+                "stream": True,
+                "thinking": {"type": "adaptive"},
+                "user": "test_user",
+                "tools": fat_tools,
+            },
+            "metadata": {},
+            "call_type": "completion",
+        },
+        "optional_params": {},
+        "litellm_params": {"custom_llm_provider": "anthropic"},
+    }
+    response_obj = ModelResponse(
+        usage={"total_tokens": 10, "completion_tokens": 5, "prompt_tokens": 5},
+        choices=[Choices(message={"role": "assistant", "content": "hello"})],
+        model="claude-opus-4-8",
+        id="chatcmpl-ID",
+    )
+
+    ArizeLogger.set_arize_attributes(span, kwargs, response_obj)
+
+    invocation_calls = [
+        c.args[1]
+        for c in span.set_attribute.call_args_list
+        if c.args[0] == SpanAttributes.LLM_INVOCATION_PARAMETERS
+    ]
+    assert len(invocation_calls) == 1
+    emitted = json.loads(invocation_calls[0])
+
+    # Tool schemas are gone, replaced by a count; everything else survives.
+    assert "tools" not in emitted
+    assert emitted["tools_count"] == 50
+    assert emitted["max_tokens"] == 64000
+    assert emitted["stream"] is True
+    assert emitted["thinking"] == {"type": "adaptive"}
+    assert emitted["user"] == "test_user"
+
+    # The whole emitted blob is small — this is the acceptance criterion.
+    assert len(invocation_calls[0]) < 1000
+
+    # User ID extraction still works off the original params.
+    span.set_attribute.assert_any_call(SpanAttributes.USER_ID, "test_user")
+
+
 class TestArizeLogger(CustomLogger):
     """
     Custom logger implementation to capture standard_callback_dynamic_params.
