@@ -510,11 +510,32 @@ def set_attributes(span: Span, kwargs, response_obj):  # noqa: PLR0915
             else None
         )
         if model_params:
+            # ENG2-1476: strip tool schemas before dumping invocation_parameters.
+            # Claude Code sessions attach the full MCP tools schema (~500KB) to
+            # every call; it is identical across calls, so per-span storage is
+            # pure duplication (same family as the ENG2-1036 message-history
+            # dedup). Keep a count so "how many tools were attached" stays
+            # observable; full schemas belong in a per-session store, not spans.
+            slim_params = {
+                k: v
+                for k, v in model_params.items()
+                if k not in ("tools", "functions")
+            }
+            for stripped_key in ("tools", "functions"):
+                stripped = model_params.get(stripped_key)
+                if isinstance(stripped, (list, tuple)) and stripped:
+                    slim_params[f"{stripped_key}_count"] = len(stripped)
+                    verbose_logger.debug(
+                        "[arize] stripped %s from invocation_parameters: %d entries, ~%d bytes",
+                        stripped_key,
+                        len(stripped),
+                        len(safe_dumps(stripped)),
+                    )
             # The Generative AI Provider: Azure, OpenAI, etc.
             safe_set_attribute(
                 span,
                 SpanAttributes.LLM_INVOCATION_PARAMETERS,
-                safe_dumps(model_params),
+                safe_dumps(slim_params),
             )
 
             if model_params.get("user"):
