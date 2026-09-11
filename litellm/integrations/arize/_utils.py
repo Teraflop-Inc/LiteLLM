@@ -44,6 +44,17 @@ def cast_as_primitive_value_type(value) -> Union[str, bool, int, float]:
         return ""
 
 
+def _usage_field(obj: Any, key: str) -> Any:
+    """Read `key` off a usage-shaped value whether it is a dict or a pydantic object.
+    The response object reaches this logger as a dict, but its nested usage details
+    may still be wrappers depending on the provider path. None in, None out."""
+    if obj is None:
+        return None
+    if isinstance(obj, dict):
+        return obj.get(key)
+    return getattr(obj, key, None)
+
+
 def safe_set_attribute(span: Span, key: str, value: Any):
     """
     Sets a span attribute safely with OTEL-compliant primitive typing for Arize/Phoenix.
@@ -592,6 +603,45 @@ def set_attributes(span: Span, kwargs, response_obj):  # noqa: PLR0915
                     SpanAttributes.LLM_TOKEN_COUNT_PROMPT,
                     usage.get("prompt_tokens"),
                 )
+
+                # Response-side detail the semconv has slots for and this logger never
+                # filled (Teraflop ENG2-1561): reasoning tokens, and the prompt cache
+                # split. Without them a consumer reads only the three totals and has to
+                # dig the rest out of metadata.usage_object, if it was logged at all.
+                details = _usage_field(usage, "completion_tokens_details")
+                reasoning = _usage_field(details, "reasoning_tokens")
+                if reasoning is not None:
+                    safe_set_attribute(
+                        span,
+                        SpanAttributes.LLM_TOKEN_COUNT_COMPLETION_DETAILS_REASONING,
+                        reasoning,
+                    )
+                cache_read = _usage_field(usage, "cache_read_input_tokens")
+                if cache_read is None:
+                    cache_read = _usage_field(
+                        _usage_field(usage, "prompt_tokens_details"), "cached_tokens"
+                    )
+                if cache_read is not None:
+                    safe_set_attribute(
+                        span,
+                        SpanAttributes.LLM_TOKEN_COUNT_PROMPT_DETAILS_CACHE_READ,
+                        cache_read,
+                    )
+                cache_write = _usage_field(usage, "cache_creation_input_tokens")
+                if cache_write is not None:
+                    safe_set_attribute(
+                        span,
+                        SpanAttributes.LLM_TOKEN_COUNT_PROMPT_DETAILS_CACHE_WRITE,
+                        cache_write,
+                    )
+
+            # Why the model stopped. Anthropic's stop_reason arrives normalised as the
+            # OpenAI finish_reason on the first choice; it was never written anywhere.
+            choices = response_obj and response_obj.get("choices")
+            if choices:
+                finish_reason = _usage_field(choices[0], "finish_reason")
+                if finish_reason is not None:
+                    safe_set_attribute(span, "llm.response.finish_reason", finish_reason)
 
         #############################################
         ########## Anthropic / Claude Code ##########

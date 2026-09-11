@@ -346,3 +346,33 @@ def test_get_supported_params_thinking():
     config = AnthropicConfig()
     params = config.get_supported_openai_params(model="claude-sonnet-4-20250514")
     assert "thinking" in params
+
+
+def test_calculate_usage_prefers_wire_thinking_tokens():
+    """With the thinking-token-count beta, Anthropic sends
+    usage.output_tokens_details.thinking_tokens. Under subscription auth the thinking
+    text is empty (an encrypted signature only), so counting tokens in the text reads
+    0 on every span. The wire count must win (Teraflop ENG2-1561)."""
+    config = AnthropicConfig()
+    usage_object = {
+        "input_tokens": 100,
+        "output_tokens": 3037,
+        "output_tokens_details": {"thinking_tokens": 1778},
+    }
+    usage = config.calculate_usage(usage_object=usage_object, reasoning_content="")
+    assert usage.completion_tokens == 3037
+    assert usage.completion_tokens_details is not None
+    assert usage.completion_tokens_details.reasoning_tokens == 1778
+
+
+def test_calculate_usage_falls_back_to_counting_reasoning_text():
+    """Without the beta field the old behaviour stands: count the reasoning text."""
+    config = AnthropicConfig()
+    usage_object = {"input_tokens": 10, "output_tokens": 50}
+    usage = config.calculate_usage(
+        usage_object=usage_object, reasoning_content="let me think about this carefully"
+    )
+    assert usage.completion_tokens_details is not None
+    assert usage.completion_tokens_details.reasoning_tokens > 0
+    none = config.calculate_usage(usage_object=usage_object, reasoning_content="")
+    assert none.completion_tokens_details is None
