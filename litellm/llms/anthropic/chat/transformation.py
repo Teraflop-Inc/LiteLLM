@@ -840,15 +840,29 @@ class AnthropicConfig(AnthropicModelInfo, BaseConfig):
         prompt_tokens_details = PromptTokensDetailsWrapper(
             cached_tokens=cache_read_input_tokens,
         )
-        completion_token_details = (
-            CompletionTokensDetailsWrapper(
+        # Prefer the count Anthropic sends on the wire. With the
+        # `thinking-token-count-2026-05-13` beta (Claude Code sends it), the response
+        # carries usage.output_tokens_details.thinking_tokens. Counting tokens in the
+        # thinking TEXT instead reads 0 under subscription auth, where the thinking
+        # block is an encrypted signature and the text is empty: 27,660 of ~29k
+        # Anthropic spans had reasoning_tokens=0 that way (Teraflop ENG2-1561). The
+        # text count stays as the fallback for responses without the beta field.
+        wire_thinking_tokens: Optional[int] = None
+        _details = _usage.get("output_tokens_details")
+        if isinstance(_details, dict) and _details.get("thinking_tokens") is not None:
+            wire_thinking_tokens = cast(int, _details["thinking_tokens"])
+        if wire_thinking_tokens is not None:
+            completion_token_details: Optional[CompletionTokensDetailsWrapper] = (
+                CompletionTokensDetailsWrapper(reasoning_tokens=wire_thinking_tokens)
+            )
+        elif reasoning_content:
+            completion_token_details = CompletionTokensDetailsWrapper(
                 reasoning_tokens=token_counter(
                     text=reasoning_content, count_response_tokens=True
                 )
             )
-            if reasoning_content
-            else None
-        )
+        else:
+            completion_token_details = None
         total_tokens = prompt_tokens + completion_tokens
 
         usage = Usage(
