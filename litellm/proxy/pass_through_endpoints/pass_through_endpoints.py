@@ -887,6 +887,11 @@ def _update_metadata_with_tags_in_header(request: Request, metadata: dict) -> di
 
     Used for google and vertex JS SDKs
     """
+    # Retain the caller's correlation header in logging only. Do not copy
+    # Authorization, cookies, or arbitrary client values into proxy metadata.
+    correlation = request.headers.get("x-litellm-metadata")
+    if correlation:
+        metadata.setdefault("requester_custom_headers", {})["x-litellm-metadata"] = correlation
     _tags = request.headers.get("tags")
     if _tags:
         metadata["tags"] = _tags.split(",")

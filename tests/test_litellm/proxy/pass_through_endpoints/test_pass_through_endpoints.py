@@ -1245,3 +1245,32 @@ async def test_delete_pass_through_endpoint_empty_list():
         # Verify the exception
         assert exc_info.value.status_code == 400
         assert "no pass-through endpoints setup" in str(exc_info.value.detail).lower()
+
+
+def test_passthrough_correlation_header_survives_logging_without_credentials():
+    from litellm.proxy.pass_through_endpoints.pass_through_endpoints import (
+        _update_metadata_with_tags_in_header,
+    )
+
+    correlation = json.dumps({"fabric_agent": "codex", "fabric_session_id": "test-session"})
+    request = MagicMock(spec=Request)
+    request.headers = Headers({
+        "x-litellm-metadata": correlation,
+        "authorization": "Bearer secret",
+        "cookie": "secret-cookie",
+        "tags": "existing,tag",
+    })
+    metadata = _update_metadata_with_tags_in_header(request, {})
+    assert metadata["tags"] == ["existing", "tag"]
+    assert metadata["requester_custom_headers"] == {"x-litellm-metadata": correlation}
+    assert "secret" not in json.dumps(metadata)
+
+
+def test_passthrough_without_correlation_keeps_metadata_unchanged():
+    from litellm.proxy.pass_through_endpoints.pass_through_endpoints import (
+        _update_metadata_with_tags_in_header,
+    )
+    request = MagicMock(spec=Request)
+    request.headers = Headers({"authorization": "Bearer secret"})
+    metadata = {"existing": "value"}
+    assert _update_metadata_with_tags_in_header(request, metadata) == {"existing": "value"}
