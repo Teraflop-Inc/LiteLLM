@@ -66,3 +66,21 @@ def test_logger_is_quiet_when_the_detail_is_absent():
     assert SpanAttributes.LLM_TOKEN_COUNT_COMPLETION_DETAILS_REASONING not in span.attrs
     assert SpanAttributes.LLM_TOKEN_COUNT_PROMPT_DETAILS_CACHE_READ not in span.attrs
     assert "llm.response.finish_reason" not in span.attrs
+
+
+def test_logger_preserves_response_tool_calls():
+    span = _Span()
+    response_obj = {
+        "choices": [{"message": {
+            "role": "assistant", "content": None,
+            "tool_calls": [{"id": "call_pwd", "type": "function", "function": {
+                "name": "exec_command", "arguments": '{"cmd":"pwd"}',
+            }}],
+        }}],
+    }
+    set_attributes(span, _kwargs(), response_obj)
+    assert "__exception__" not in span.attrs
+    prefix = "llm.output_messages.0.message.tool_calls.0.tool_call"
+    assert span.attrs[f"{prefix}.id"] == "call_pwd"
+    assert span.attrs[f"{prefix}.function.name"] == "exec_command"
+    assert span.attrs[f"{prefix}.function.arguments"] == '{"cmd":"pwd"}'
