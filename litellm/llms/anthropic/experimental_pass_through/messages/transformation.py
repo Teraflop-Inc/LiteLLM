@@ -69,19 +69,17 @@ class AnthropicMessagesConfig(BaseAnthropicMessagesConfig):
         # SIMPLIFIED OAuth pass-through logic
         oauth_token = None
         
-        print(f"[OAUTH DEBUG] Checking OAuth pass-through for model: {model}")
-        print(f"[OAUTH DEBUG] oauth_pass_through flag: {litellm_params.get('oauth_pass_through', False)}")
-        print(f"[OAUTH DEBUG] api_key param: {api_key[:20] if api_key else 'None'}...")
+        logger.debug(f"[oauth] Checking OAuth pass-through for model: {model}")
+        logger.debug(f"[oauth] oauth_pass_through flag: {litellm_params.get('oauth_pass_through', False)}")
         
         # Check if OAuth pass-through is enabled and we have a token from the auth layer
         if litellm_params.get("oauth_pass_through", False):
-            print(f"[OAUTH DEBUG] OAuth pass-through enabled for model: {model}")
+            logger.debug(f"[oauth] OAuth pass-through enabled for model: {model}")
             
             # Primary method: Check if api_key parameter already contains the OAuth token
             # (passed from litellm_pre_call_utils.py)
             if api_key and api_key.startswith("sk-ant-oat"):
                 oauth_token = api_key
-                print(f"[OAUTH DEBUG] Using OAuth token from api_key parameter: {oauth_token[:20]}...")
             else:
                 # Fallback: Check litellm_params for the token
                 # First check for oauth_token (from router fix)
@@ -90,20 +88,14 @@ class AnthropicMessagesConfig(BaseAnthropicMessagesConfig):
                 
                 if oauth_token_from_params:
                     oauth_token = oauth_token_from_params
-                    print(f"[OAUTH DEBUG] Using OAuth token from litellm_params.oauth_token: {oauth_token[:20]}...")
                 elif api_key_from_params and api_key_from_params.startswith("sk-ant-oat"):
                     oauth_token = api_key_from_params
-                    print(f"[OAUTH DEBUG] Using OAuth token from litellm_params.api_key: {oauth_token[:20]}...")
                 else:
-                    print(f"[OAUTH DEBUG] WARNING: OAuth pass-through enabled but no OAuth token found!")
-                    print(f"[OAUTH DEBUG] api_key: {api_key[:20] if api_key else 'None'}...")
-                    print(f"[OAUTH DEBUG] litellm_params.api_key: {api_key_from_params[:20] if api_key_from_params else 'None'}...")
-                    print(f"[OAUTH DEBUG] litellm_params.oauth_token: {oauth_token_from_params[:20] if oauth_token_from_params else 'None'}...")
+                    logger.debug(f"[oauth] WARNING: OAuth pass-through enabled but no OAuth token found!")
 
         # Set authentication headers
         if oauth_token:
             logger.info(f"[OAuth Debug] Using OAuth authentication")
-            print(f"[OAUTH DEBUG] Setting authorization header with OAuth token: {oauth_token[:20]}...")
             
             # Set the Bearer token for OAuth authentication
             headers["authorization"] = f"Bearer {oauth_token}"
@@ -113,7 +105,6 @@ class AnthropicMessagesConfig(BaseAnthropicMessagesConfig):
                 oauth_betas = ["oauth-2025-04-20", "claude-code-20250219", "interleaved-thinking-2025-05-14", "fine-grained-tool-streaming-2025-05-14"]
                 headers["anthropic-beta"] = ",".join(oauth_betas)
                 
-            print(f"[OAUTH DEBUG] Final OAuth headers set: authorization=Bearer {oauth_token[:20]}..., anthropic-beta={headers.get('anthropic-beta', 'not set')}")
         else:
             logger.info(f"[OAuth Debug] Using API key authentication")
             # Fallback to API key authentication (existing logic)
