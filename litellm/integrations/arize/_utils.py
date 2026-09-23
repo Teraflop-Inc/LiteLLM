@@ -581,6 +581,24 @@ def set_attributes(span: Span, kwargs, response_obj):  # noqa: PLR0915
                     response_message.get("content", ""),
                 )
 
+                # Responses pass-through normalizes function calls into tool_calls.
+                # Preserve them even when the assistant has no text content.
+                for tool_idx, tool_call in enumerate(response_message.get("tool_calls") or []):
+                    tool_prefix = f"{prefix}.{MessageAttributes.MESSAGE_TOOL_CALLS}.{tool_idx}"
+                    function = tool_call.get("function") or {}
+                    safe_set_attribute(
+                        span, f"{tool_prefix}.{ToolCallAttributes.TOOL_CALL_ID}",
+                        tool_call.get("id"),
+                    )
+                    safe_set_attribute(
+                        span, f"{tool_prefix}.{ToolCallAttributes.TOOL_CALL_FUNCTION_NAME}",
+                        function.get("name"),
+                    )
+                    safe_set_attribute(
+                        span, f"{tool_prefix}.{ToolCallAttributes.TOOL_CALL_FUNCTION_ARGUMENTS_JSON}",
+                        function.get("arguments"),
+                    )
+
             # Token usage info.
             usage = response_obj and response_obj.get("usage")
             if usage:
