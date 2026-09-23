@@ -314,6 +314,9 @@ class HttpPassThroughEndpointHelpers(BasePassthroughUtils):
             return EndpointType.VERTEX_AI
         elif parsed_url.hostname == "api.anthropic.com":
             return EndpointType.ANTHROPIC
+        elif parsed_url.hostname == "chatgpt.com" and "/backend-api/codex" in parsed_url.path:
+            # Codex signed in with ChatGPT (ENG2-402): Responses API, always streamed.
+            return EndpointType.CHATGPT_CODEX
         return EndpointType.GENERIC
 
     @staticmethod
@@ -686,6 +689,17 @@ async def pass_through_request(  # noqa: PLR0915
                 "headers": headers,
             },
         )
+        # chatgpt.com streams Codex responses without a text/event-stream content-type, so the
+        # response-header check below never fires and the stream would be buffered and logged
+        # as an opaque blob. Trust the request's own `stream` flag instead (ENG2-402).
+        if (
+            not stream
+            and endpoint_type == EndpointType.CHATGPT_CODEX
+            and isinstance(_parsed_body, dict)
+            and _parsed_body.get("stream") is True
+        ):
+            verbose_proxy_logger.debug("[codex-passthrough] streaming per request body")
+            stream = True
         if stream:
             req = async_client.build_request(
                 "POST",

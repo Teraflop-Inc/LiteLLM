@@ -14,6 +14,9 @@ from litellm.types.utils import StandardPassThroughResponseObject
 from .llm_provider_handlers.anthropic_passthrough_logging_handler import (
     AnthropicPassthroughLoggingHandler,
 )
+from .llm_provider_handlers.chatgpt_codex_passthrough_logging_handler import (
+    ChatGPTCodexPassthroughLoggingHandler,
+)
 from .llm_provider_handlers.vertex_passthrough_logging_handler import (
     VertexPassthroughLoggingHandler,
 )
@@ -35,15 +38,10 @@ class PassThroughStreamingHandler:
         - Yields chunks from the response
         - Collect non-empty chunks for post-processing (logging)
         """
-        try:
-            raw_bytes: List[bytes] = []
-            async for chunk in response.aiter_bytes():
-                raw_bytes.append(chunk)
-                yield chunk
+        raw_bytes: List[bytes] = []
+        logged = False
 
-            # After all chunks are processed, handle post-processing
-            end_time = datetime.now()
-
+        def _schedule_logging() -> None:
             asyncio.create_task(
                 PassThroughStreamingHandler._route_streaming_logging_to_handler(
                     litellm_logging_obj=litellm_logging_obj,
@@ -53,9 +51,34 @@ class PassThroughStreamingHandler:
                     endpoint_type=endpoint_type,
                     start_time=start_time,
                     raw_bytes=raw_bytes,
-                    end_time=end_time,
+                    end_time=datetime.now(),
                 )
             )
+
+        try:
+            async for chunk in response.aiter_bytes():
+                raw_bytes.append(chunk)
+                yield chunk
+
+            # After all chunks are processed, handle post-processing
+            logged = True
+            _schedule_logging()
+        except (asyncio.CancelledError, GeneratorExit):
+            # Codex hangs up the moment it reads `response.completed`, which cancels this
+            # generator before the post-processing above runs, so the call was never logged.
+            # The final event is already collected; log what we have (ENG2-402).
+            if (
+                not logged
+                and raw_bytes
+                and endpoint_type == EndpointType.CHATGPT_CODEX
+            ):
+                verbose_proxy_logger.debug(
+                    "[codex-passthrough] client closed stream after %d chunks; logging collected",
+                    len(raw_bytes),
+                )
+                logged = True
+                _schedule_logging()
+            raise
         except Exception as e:
             verbose_proxy_logger.error(f"Error in chunk_processor: {str(e)}")
             raise
@@ -101,6 +124,14 @@ class PassThroughStreamingHandler:
                 anthropic_passthrough_logging_handler_result["result"]
             )
             kwargs = anthropic_passthrough_logging_handler_result["kwargs"]
+        elif endpoint_type == EndpointType.CHATGPT_CODEX:
+            codex_result = ChatGPTCodexPassthroughLoggingHandler.handle_collected_chunks(
+                litellm_logging_obj=litellm_logging_obj,
+                request_body=request_body,
+                all_chunks=all_chunks,
+            )
+            standard_logging_response_object = codex_result["result"]
+            kwargs = codex_result["kwargs"]
         elif endpoint_type == EndpointType.VERTEX_AI:
             vertex_passthrough_logging_handler_result = (
                 VertexPassthroughLoggingHandler._handle_logging_vertex_collected_chunks(

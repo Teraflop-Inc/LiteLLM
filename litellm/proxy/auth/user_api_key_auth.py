@@ -7,6 +7,7 @@ Returns a UserAPIKeyAuth object if the API key is valid
 
 """
 
+import os
 import asyncio
 import secrets
 from datetime import datetime, timezone
@@ -387,6 +388,23 @@ async def _user_api_key_auth_builder(  # noqa: PLR0915
             oauth_auth.metadata = {"oauth_pass_through": True, "oauth_token": token}
             verbose_proxy_logger.debug("[auth] oauth pass-through route=%s", route)
             return oauth_auth
+    # Codex signed in with ChatGPT (ENG2-402). Its bearer is a ChatGPT OAuth JWT that only
+    # chatgpt.com accepts, so on the Codex pass-through route it is forwarded unchanged and
+    # chatgpt.com does the checking, the same trust model as the Claude OAuth branch above.
+    # Scoped to the route prefix: anywhere else a JWT still has to pass the normal checks.
+    codex_prefix = os.environ.get("CODEX_PASSTHROUGH_PREFIX", "/teraflop-codex")
+    if route.startswith(codex_prefix) and auth_header.startswith("Bearer "):
+        token = auth_header[len("Bearer "):]
+        if token.startswith("eyJ") and token.count(".") == 2:
+            verbose_proxy_logger.debug("[auth] chatgpt oauth pass-through route=%s", route)
+            codex_auth = UserAPIKeyAuth(
+                api_key=hash_token(token),
+                user_id="chatgpt-oauth-user",
+                user_role="proxy_admin",
+            )
+            codex_auth.metadata = {"oauth_pass_through": True, "harness": "codex"}
+            return codex_auth
+
     from litellm.proxy.proxy_server import (
         general_settings,
         jwt_handler,
