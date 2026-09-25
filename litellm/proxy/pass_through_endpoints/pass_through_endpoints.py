@@ -283,6 +283,21 @@ async def chat_completion_pass_through_endpoint(  # noqa: PLR0915
 
 class HttpPassThroughEndpointHelpers(BasePassthroughUtils):
     @staticmethod
+    def drop_caller_identity_header(headers: dict) -> dict:
+        """Remove general_settings.user_header_name before a request leaves the proxy.
+
+        That header names the caller for this proxy's own logs (the end user on the span).
+        With forward_headers on, it would otherwise travel upstream too: a Codex call would
+        hand the caller's email to chatgpt.com, which has no use for it.
+        """
+        from litellm.proxy.proxy_server import general_settings
+
+        name = (general_settings or {}).get("user_header_name")
+        if not name or not isinstance(name, str):
+            return headers
+        return {k: v for k, v in headers.items() if k.lower() != name.lower()}
+
+    @staticmethod
     def get_response_headers(
         headers: httpx.Headers,
         litellm_call_id: Optional[str] = None,
@@ -586,6 +601,7 @@ async def pass_through_request(  # noqa: PLR0915
             headers=headers,
             forward_headers=forward_headers,
         )
+        headers = HttpPassThroughEndpointHelpers.drop_caller_identity_header(headers)
 
         if merge_query_params:
             # Create a new URL with the merged query params

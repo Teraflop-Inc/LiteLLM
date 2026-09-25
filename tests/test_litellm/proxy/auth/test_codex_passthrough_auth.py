@@ -60,3 +60,26 @@ async def test_no_end_user_when_header_missing(monkeypatch):
     monkeypatch.setattr(proxy_server, "general_settings", {"user_header_name": "x-dal-user"})
     auth = await _auth({"authorization": f"Bearer {JWT}"})
     assert auth.end_user_id is None
+
+
+def test_the_identity_header_is_not_forwarded_upstream(monkeypatch):
+    """The header names the caller for the proxy's logs; chatgpt.com never sees it."""
+    from litellm.proxy.pass_through_endpoints.pass_through_endpoints import (
+        HttpPassThroughEndpointHelpers,
+    )
+
+    monkeypatch.setattr(proxy_server, "general_settings", {"user_header_name": "x-dal-user"})
+    out = HttpPassThroughEndpointHelpers.drop_caller_identity_header(
+        {"authorization": "Bearer t", "X-DAL-User": "dev@example.com", "x-other": "1"}
+    )
+    assert out == {"authorization": "Bearer t", "x-other": "1"}
+
+
+def test_headers_untouched_without_the_setting(monkeypatch):
+    from litellm.proxy.pass_through_endpoints.pass_through_endpoints import (
+        HttpPassThroughEndpointHelpers,
+    )
+
+    monkeypatch.setattr(proxy_server, "general_settings", {})
+    headers = {"x-dal-user": "dev@example.com"}
+    assert HttpPassThroughEndpointHelpers.drop_caller_identity_header(headers) == headers
