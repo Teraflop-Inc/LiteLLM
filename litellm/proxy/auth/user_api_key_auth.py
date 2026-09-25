@@ -401,6 +401,12 @@ async def _user_api_key_auth_builder(  # noqa: PLR0915
                 api_key=hash_token(token),
                 user_id="chatgpt-oauth-user",
                 user_role="proxy_admin",
+                # The ChatGPT JWT is not decoded here, so the caller names itself: with
+                # general_settings.user_header_name set, that header becomes the end user
+                # on the span (user_api_key_end_user_id). Unset, this stays None.
+                end_user_id=get_end_user_id_from_request_body(
+                    request_data or {}, dict(request.headers)
+                ),
             )
             codex_auth.metadata = {"oauth_pass_through": True, "harness": "codex"}
             return codex_auth
