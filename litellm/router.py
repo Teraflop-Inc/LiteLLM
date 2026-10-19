@@ -2750,8 +2750,12 @@ class Router:
                     data["oauth_pass_through"] = oauth_params["oauth_pass_through"]
                 if oauth_params.get("oauth_token"):
                     data["oauth_token"] = oauth_params["oauth_token"]
-                # Replaces the deployment's own key, so the call bills the caller's key.
-                if oauth_params.get("caller_api_key"):
+                # Replaces an Anthropic deployment's own key, so the call bills the
+                # caller's key. Never hand an Anthropic key to another provider.
+                if oauth_params.get("caller_api_key") and (
+                    data.get("custom_llm_provider") == "anthropic"
+                    or str(data.get("model", "")).startswith("anthropic/")
+                ):
                     data["api_key"] = oauth_params["caller_api_key"]
                 # Remove litellm_params from kwargs to avoid duplication
                 kwargs = kwargs.copy()

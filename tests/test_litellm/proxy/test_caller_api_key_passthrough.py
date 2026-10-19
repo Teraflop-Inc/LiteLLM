@@ -14,11 +14,11 @@ from litellm.proxy.litellm_pre_call_utils import add_litellm_data_to_request
 CALLER_KEY = "sk-ant-api03-caller-test-key"
 
 
-def _request(headers: dict) -> Request:
+def _request(headers: dict, path: str = "/v1/messages") -> Request:
     request = MagicMock(spec=Request)
     request.url = MagicMock()
-    request.url.path = "/v1/messages"
-    request.url.__str__.return_value = "http://localhost/v1/messages"
+    request.url.path = path
+    request.url.__str__.return_value = f"http://localhost{path}"
     request.method = "POST"
     request.query_params = {}
     request.headers = {"content-type": "application/json", **headers}
@@ -27,10 +27,10 @@ def _request(headers: dict) -> Request:
     return request
 
 
-async def _pre_call(headers: dict, metadata: dict) -> dict:
+async def _pre_call(headers: dict, metadata: dict, path: str = "/v1/messages") -> dict:
     return await add_litellm_data_to_request(
         data={"model": "claude-haiku-5-5"},
-        request=_request(headers),
+        request=_request(headers, path),
         user_api_key_dict=UserAPIKeyAuth(api_key="hashed-proxy-key", metadata=metadata),
         proxy_config=MagicMock(),
         general_settings={},
@@ -42,6 +42,14 @@ async def _pre_call(headers: dict, metadata: dict) -> dict:
 async def test_caller_anthropic_key_is_carried_to_the_router():
     data = await _pre_call({"x-api-key": CALLER_KEY}, metadata={})
     assert data["litellm_params"]["caller_api_key"] == CALLER_KEY
+
+
+@pytest.mark.asyncio
+async def test_caller_key_is_only_honored_on_the_messages_route():
+    data = await _pre_call(
+        {"x-api-key": CALLER_KEY}, metadata={}, path="/v1/chat/completions"
+    )
+    assert "caller_api_key" not in (data.get("litellm_params") or {})
 
 
 @pytest.mark.asyncio
@@ -88,12 +96,26 @@ def _router() -> Router:
                     "api_key": "sk-ant-api03-proxy-own-key",
                     "custom_llm_provider": "anthropic",
                 },
-            }
+            },
+            {
+                "model_name": "anthropic/*",
+                "litellm_params": {
+                    "model": "anthropic/*",
+                    "api_key": "sk-ant-api03-proxy-own-key",
+                },
+            },
+            {
+                "model_name": "gpt-test",
+                "litellm_params": {
+                    "model": "openai/gpt-test",
+                    "api_key": "sk-openai-own-key",
+                },
+            },
         ]
     )
 
 
-async def _router_call(**kwargs) -> dict:
+async def _router_call(model: str = "claude-haiku-5-5", **kwargs) -> dict:
     seen: dict = {}
 
     async def upstream(**call_kwargs):
@@ -101,15 +123,24 @@ async def _router_call(**kwargs) -> dict:
         return {"ok": True}
 
     await _router()._ageneric_api_call_with_fallbacks_helper(
-        model="claude-haiku-5-5", original_generic_function=upstream, **kwargs
+        model=model, original_generic_function=upstream, **kwargs
     )
     return seen
 
 
 @pytest.mark.asyncio
-async def test_router_uses_the_caller_key_instead_of_the_deployment_key():
-    seen = await _router_call(litellm_params={"caller_api_key": CALLER_KEY})
+@pytest.mark.parametrize("model", ["claude-haiku-5-5", "anthropic/claude-haiku-5-5"])
+async def test_router_uses_the_caller_key_instead_of_the_deployment_key(model):
+    seen = await _router_call(model, litellm_params={"caller_api_key": CALLER_KEY})
     assert seen["api_key"] == CALLER_KEY
+
+
+@pytest.mark.asyncio
+async def test_router_never_hands_the_caller_key_to_another_provider():
+    seen = await _router_call(
+        "gpt-test", litellm_params={"caller_api_key": CALLER_KEY}
+    )
+    assert seen["api_key"] == "sk-openai-own-key"
 
 
 @pytest.mark.asyncio

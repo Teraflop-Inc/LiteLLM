@@ -918,6 +918,9 @@ async def add_litellm_data_to_request(  # noqa: PLR0915
 
 
 def _caller_anthropic_api_key(request: Request) -> Optional[str]:
+    # Same scope as Claude login pass-through: the Anthropic-native /v1/messages route.
+    if "/v1/messages" not in request.url.path:
+        return None
     key = request.headers.get("x-api-key", "")
     return key if key.startswith("sk-ant-api") else None
 
