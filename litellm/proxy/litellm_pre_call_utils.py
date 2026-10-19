@@ -887,6 +887,8 @@ async def add_litellm_data_to_request(  # noqa: PLR0915
     litellm_params = data.get("litellm_params") or {}
     if caller_api_key and not litellm_params.get("oauth_pass_through"):
         litellm_params["caller_api_key"] = caller_api_key
+        if (user_api_key_dict.metadata or {}).get("caller_key_pass_through"):
+            litellm_params["caller_key_pass_through"] = True
         data["litellm_params"] = litellm_params
         verbose_proxy_logger.debug(
             "[auth] caller api key pass-through len=%d", len(caller_api_key)

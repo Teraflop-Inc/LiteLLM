@@ -2750,12 +2750,23 @@ class Router:
                     data["oauth_pass_through"] = oauth_params["oauth_pass_through"]
                 if oauth_params.get("oauth_token"):
                     data["oauth_token"] = oauth_params["oauth_token"]
+                anthropic_deployment = data.get(
+                    "custom_llm_provider"
+                ) == "anthropic" or str(data.get("model", "")).startswith("anthropic/")
+                # Pass-through credentials ride on the network gate, so they may only reach
+                # Anthropic. Spending a deployment's own key takes a LiteLLM key (0014).
+                if (
+                    oauth_params.get("oauth_pass_through")
+                    or oauth_params.get("caller_key_pass_through")
+                ) and not anthropic_deployment:
+                    raise litellm.AuthenticationError(
+                        message="Pass-through credentials only reach Anthropic models; other models need a LiteLLM key.",
+                        llm_provider=str(data.get("custom_llm_provider") or "unknown"),
+                        model=model_name,
+                    )
                 # Replaces an Anthropic deployment's own key, so the call bills the
                 # caller's key. Never hand an Anthropic key to another provider.
-                if oauth_params.get("caller_api_key") and (
-                    data.get("custom_llm_provider") == "anthropic"
-                    or str(data.get("model", "")).startswith("anthropic/")
-                ):
+                if oauth_params.get("caller_api_key") and anthropic_deployment:
                     data["api_key"] = oauth_params["caller_api_key"]
                 # Remove litellm_params from kwargs to avoid duplication
                 kwargs = kwargs.copy()

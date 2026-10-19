@@ -349,6 +349,16 @@ async def check_api_key_for_custom_headers_or_pass_through_endpoints(
     return api_key
 
 
+def _caller_key_pass_through(route: str, request: Request) -> Optional[str]:
+    """The caller's Anthropic API key, when it is the request's only credential."""
+    if "/v1/messages" not in route:
+        return None
+    if request.headers.get("authorization") or request.headers.get("x-litellm-api-key"):
+        return None
+    key = request.headers.get("x-api-key", "")
+    return key if key.startswith("sk-ant-api") else None
+
+
 async def _user_api_key_auth_builder(  # noqa: PLR0915
     request: Request,
     api_key: str,
@@ -410,6 +420,23 @@ async def _user_api_key_auth_builder(  # noqa: PLR0915
             )
             codex_auth.metadata = {"oauth_pass_through": True, "harness": "codex"}
             return codex_auth
+    # A caller's own Anthropic API key with no LiteLLM key beside it passes through like the
+    # Claude login token above (decision 0014): the network is the gate, since the proxy is
+    # tailnet-only, and the key's own org pays. With a LiteLLM key present, the request takes
+    # the normal checks instead, and the key is still forwarded (upstream's v1.82+ contract).
+    caller_key = _caller_key_pass_through(route=route, request=request)
+    if caller_key is not None:
+        verbose_proxy_logger.debug("[auth] caller api key pass-through route=%s", route)
+        caller_auth = UserAPIKeyAuth(
+            api_key=hash_token(caller_key),
+            user_id="caller-key-user",
+            user_role="proxy_admin",
+            end_user_id=get_end_user_id_from_request_body(
+                request_data or {}, dict(request.headers)
+            ),
+        )
+        caller_auth.metadata = {"caller_key_pass_through": True}
+        return caller_auth
 
     from litellm.proxy.proxy_server import (
         general_settings,
