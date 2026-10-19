@@ -750,9 +750,10 @@ async def add_litellm_data_to_request(  # noqa: PLR0915
 
     data[_metadata_variable_name]["user_api_key_metadata"] = user_api_key_dict.metadata
     _headers = dict(request.headers)
-    _headers.pop(
-        "authorization", None
-    )  # do not store the original `sk-..` api key in the db
+    # Callers' credentials stay out of stored metadata, including a caller's own
+    # Anthropic key and the proxy key sent alongside it.
+    for credential_header in ("authorization", "x-api-key", "x-litellm-api-key"):
+        _headers.pop(credential_header, None)
     data[_metadata_variable_name]["headers"] = _headers
     data[_metadata_variable_name]["endpoint"] = str(request.url)
 
@@ -878,6 +879,19 @@ async def add_litellm_data_to_request(  # noqa: PLR0915
         "[PROXY] returned data from litellm_pre_call_utils: %s", data
     )
 
+    # Caller-supplied Anthropic API key: a request that passed the proxy's own key
+    # check and also sends `x-api-key: sk-ant-api...` bills that key, not the proxy's.
+    # Same contract as upstream's forward_llm_provider_auth_headers (v1.82+), which this
+    # fork predates.
+    caller_api_key = _caller_anthropic_api_key(request)
+    litellm_params = data.get("litellm_params") or {}
+    if caller_api_key and not litellm_params.get("oauth_pass_through"):
+        litellm_params["caller_api_key"] = caller_api_key
+        data["litellm_params"] = litellm_params
+        verbose_proxy_logger.debug(
+            "[auth] caller api key pass-through len=%d", len(caller_api_key)
+        )
+
     ## ENFORCED PARAMS CHECK
     # loop through each enforced param
     # example enforced_params ['user', 'metadata', 'metadata.generation_name']
@@ -901,6 +915,11 @@ async def add_litellm_data_to_request(  # noqa: PLR0915
     )
 
     return data
+
+
+def _caller_anthropic_api_key(request: Request) -> Optional[str]:
+    key = request.headers.get("x-api-key", "")
+    return key if key.startswith("sk-ant-api") else None
 
 
 def _update_model_if_team_alias_exists(
