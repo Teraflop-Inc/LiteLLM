@@ -46,6 +46,10 @@ def _starlette_request(headers: dict, path: str = "/v1/messages") -> StarletteRe
         ({"x-api-key": CALLER_KEY, "authorization": "Bearer sk-proxy"}, "/v1/messages", None),
         ({"x-api-key": CALLER_KEY}, "/v1/chat/completions", None),
         ({"x-api-key": "not-an-anthropic-key"}, "/v1/messages", None),
+        ({"x-api-key": "sk-ant-svc01-service-account-key"}, "/v1/messages", "sk-ant-svc01-service-account-key"),
+        ({"x-api-key": "sk-ant-usr01-personal-key"}, "/v1/messages", "sk-ant-usr01-personal-key"),
+        ({"x-api-key": "sk-ant-oat01-login-token"}, "/v1/messages", None),
+        ({"x-api-key": "sk-ant-admin01-admin-key"}, "/v1/messages", None),
     ],
 )
 def test_caller_key_passes_through_only_as_the_sole_credential(headers, path, expected):
@@ -96,9 +100,13 @@ async def _pre_call(headers: dict, metadata: dict, path: str = "/v1/messages") -
 
 
 @pytest.mark.asyncio
-async def test_caller_anthropic_key_is_carried_to_the_router():
-    data = await _pre_call({"x-api-key": CALLER_KEY}, metadata={})
-    assert data["litellm_params"]["caller_api_key"] == CALLER_KEY
+@pytest.mark.parametrize(
+    "key",
+    [CALLER_KEY, "sk-ant-svc01-service-account-key", "sk-ant-usr01-personal-key"],
+)
+async def test_caller_anthropic_key_is_carried_to_the_router(key):
+    data = await _pre_call({"x-api-key": key}, metadata={})
+    assert data["litellm_params"]["caller_api_key"] == key
 
 
 @pytest.mark.asyncio
