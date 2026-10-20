@@ -355,3 +355,64 @@ async def test_body_cannot_set_the_pass_through_markers(smuggled):
     assert not params.get("oauth_pass_through")
     assert "oauth_token" not in params
     assert not params.get("caller_key_pass_through"), "only the auth result sets this"
+
+
+# --- Greptile on #21: count_tokens ran on the deployment's key for an unchecked login
+# token, and login tokens still reached logs in slices.
+
+LOGIN_TOKEN = "sk-ant-oat01-LOGINSECRETabcdefghijklmnopqrstuvwxyz0123456789"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "metadata, expect_endpoint",
+    [
+        ({"oauth_pass_through": True, "oauth_token": LOGIN_TOKEN}, False),
+        ({"caller_key_pass_through": True}, False),
+        ({}, True),  # a LiteLLM key holder may still use the provider's counting endpoint
+    ],
+)
+async def test_count_tokens_never_spends_the_deployment_key_for_a_pass_through_identity(
+    monkeypatch, metadata, expect_endpoint
+):
+    from litellm.proxy.anthropic_endpoints import endpoints
+
+    seen = {}
+
+    async def fake_counter(request, call_endpoint=False):
+        seen["call_endpoint"] = call_endpoint
+        return {"total_tokens": 7}
+
+    async def fake_body(request):
+        return {"model": "claude-haiku-5-5", "messages": [{"role": "user", "content": "hi"}]}
+
+    monkeypatch.setattr(proxy_server, "token_counter", fake_counter)
+    monkeypatch.setattr(endpoints, "_read_request_body", fake_body)
+    out = await endpoints.count_tokens(
+        request=_starlette_request({}, "/v1/messages/count_tokens"),
+        user_api_key_dict=UserAPIKeyAuth(api_key="h", metadata=metadata),
+    )
+    assert out == {"input_tokens": 7}
+    assert seen["call_endpoint"] is expect_endpoint
+
+
+@pytest.mark.asyncio
+async def test_login_token_never_reaches_a_log_line(caplog):
+    from litellm.llms.anthropic.common_utils import AnthropicModelInfo
+
+    with caplog.at_level(logging.DEBUG):
+        await _pre_call(
+            {"authorization": f"Bearer {LOGIN_TOKEN}"},
+            metadata={"oauth_pass_through": True, "oauth_token": LOGIN_TOKEN},
+        )
+        AnthropicModelInfo.detect_oauth_token(f"Bearer {LOGIN_TOKEN}")
+        AnthropicModelInfo.extract_oauth_from_request(
+            {"authorization": f"Bearer {LOGIN_TOKEN}"}, {"oauth_pass_through": True}
+        )
+    # Not even a slice: anything after the public prefix is the secret.
+    import re
+
+    leaked = [
+        r.getMessage()[:80] for r in caplog.records if re.search(r"sk-ant-oat01-\w", r.getMessage())
+    ]
+    assert not leaked, leaked

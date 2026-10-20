@@ -109,7 +109,7 @@ class AnthropicModelInfo(BaseLLMModelInfo):
         import logging
         logger = logging.getLogger(__name__)
         
-        logger.info(f"[OAuth Debug] detect_oauth_token called with header: {auth_header[:50]}...")
+        logger.info(f"[OAuth Debug] detect_oauth_token called (bearer={auth_header.startswith('Bearer ')}, len={len(auth_header)})")
         
         if not auth_header.startswith("Bearer "):
             logger.info(f"[OAuth Debug] Header does not start with 'Bearer ', returning False")
@@ -118,7 +118,7 @@ class AnthropicModelInfo(BaseLLMModelInfo):
         token = auth_header.replace("Bearer ", "")
         is_oauth = token.startswith("sk-ant-oat")
         
-        logger.info(f"[OAuth Debug] Token starts with: {token[:15]}...")
+        logger.info(f"[OAuth Debug] Token length: {len(token)}")
         logger.info(f"[OAuth Debug] Is OAuth token: {is_oauth}")
         
         return is_oauth
@@ -139,11 +139,11 @@ class AnthropicModelInfo(BaseLLMModelInfo):
             
         # Handle case-insensitive header lookup
         auth_header = request_headers.get("authorization") or request_headers.get("Authorization", "")
-        logger.info(f"[OAuth Debug] Found auth header: {auth_header[:50] if auth_header else 'None'}...")
+        logger.info(f"[OAuth Debug] Found auth header: {bool(auth_header)} (len={len(auth_header or '')})")
         
         if AnthropicModelInfo.detect_oauth_token(auth_header):
             token = auth_header.replace("Bearer ", "")
-            logger.info(f"[OAuth Debug] Extracted OAuth token: {token[:15]}...")
+            logger.info(f"[OAuth Debug] Extracted OAuth token (len={len(token)})")
             return token
             
         logger.info(f"[OAuth Debug] No OAuth token detected, returning None")
@@ -186,12 +186,12 @@ class AnthropicModelInfo(BaseLLMModelInfo):
         logger = logging.getLogger(__name__)
         
         if oauth_token:
-            logger.info(f"[OAuth Debug] Using OAuth authentication with token: {oauth_token[:15]}...")
+            logger.info(f"[OAuth Debug] Using OAuth authentication (token len={len(oauth_token)})")
             headers["authorization"] = f"Bearer {oauth_token}"
             # Add OAuth beta headers from OpenCode research
             betas.update({"oauth-2025-04-20", "claude-code-20250219", "interleaved-thinking-2025-05-14", "fine-grained-tool-streaming-2025-05-14"})
         else:
-            logger.info(f"[OAuth Debug] Using API key authentication with key: {api_key[:15] if api_key else 'None'}...")
+            logger.info(f"[OAuth Debug] Using API key authentication (key set={bool(api_key)})")
             # Existing API key authentication
             headers["x-api-key"] = api_key
 

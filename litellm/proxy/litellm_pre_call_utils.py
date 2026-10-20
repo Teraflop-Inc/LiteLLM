@@ -865,8 +865,8 @@ async def add_litellm_data_to_request(  # noqa: PLR0915
     ):
         oauth_token = user_api_key_dict.metadata.get('oauth_token')
         verbose_proxy_logger.debug(
-            "[OAUTH] OAuth pass-through detected! Passing OAuth token in litellm_params: %s...",
-            oauth_token[:20] if oauth_token else "None"
+            "[OAUTH] OAuth pass-through detected; token in litellm_params (len=%d)",
+            len(oauth_token or ""),
         )
         
         # Pass OAuth token through litellm_params instead of api_key
