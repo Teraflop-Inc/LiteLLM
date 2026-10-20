@@ -2692,8 +2692,9 @@ class Router:
             self._update_kwargs_before_fallbacks(
                 model=model, kwargs=kwargs, metadata_variable_name="litellm_metadata"
             )
+            # Key names only: kwargs carries litellm_params.caller_api_key / oauth_token.
             verbose_router_logger.debug(
-                f"Inside ageneric_api_call_with_fallbacks() - model: {model}; kwargs: {kwargs}"
+                f"Inside ageneric_api_call_with_fallbacks() - model: {model}; kwargs keys: {sorted(kwargs)}"
             )
             response = await self.async_function_with_fallbacks(**kwargs)
             return response

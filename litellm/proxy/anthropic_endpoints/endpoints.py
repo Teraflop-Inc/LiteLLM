@@ -269,10 +269,16 @@ async def count_tokens(
             messages=messages
         )
         
-        # Call the internal token counter function with direct request flag set to False
+        # The provider's counting endpoint runs on the deployment's own key. A pass-through
+        # identity (Claude login, caller key) was never checked by the proxy, so it gets a
+        # local count instead of spending that key (Greptile on #21).
+        _meta = user_api_key_dict.metadata or {}
+        pass_through = bool(
+            _meta.get("oauth_pass_through") or _meta.get("caller_key_pass_through")
+        )
         token_response = await internal_token_counter(
             request=token_request,
-            call_endpoint=True,
+            call_endpoint=not pass_through,
         )
         _token_response_dict: dict = {}
         if isinstance(token_response, TokenCountResponse):
