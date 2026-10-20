@@ -152,11 +152,14 @@ async def test_caller_and_proxy_keys_stay_out_of_stored_metadata():
 
 
 @pytest.mark.asyncio
-async def test_caller_key_never_reaches_an_info_log_line(caplog):
-    # sf-litellm runs at INFO. Upstream's own DEBUG lines print raw request headers.
-    with caplog.at_level(logging.INFO, logger=verbose_proxy_logger.name):
+@pytest.mark.parametrize("level", [logging.INFO, logging.DEBUG])
+async def test_caller_key_never_reaches_a_log_line(caplog, level):
+    # sf-litellm runs at INFO, but DEBUG is what someone turns on to troubleshoot, and
+    # upstream's DEBUG lines printed raw request headers and the whole request data.
+    with caplog.at_level(level, logger=verbose_proxy_logger.name):
         await _pre_call({"x-api-key": CALLER_KEY}, metadata={})
-    assert all(CALLER_KEY not in r.getMessage() for r in caplog.records)
+    leaked = [r.getMessage()[:80] for r in caplog.records if CALLER_KEY in r.getMessage()]
+    assert not leaked, leaked
 
 
 def _router() -> Router:
@@ -241,3 +244,114 @@ async def test_router_never_hands_the_caller_key_to_another_provider():
 async def test_router_keeps_the_deployment_key_without_a_caller_key():
     seen = await _router_call()
     assert seen["api_key"] == "sk-ant-api03-proxy-own-key"
+
+
+# --- Hardening (2026-10-20 review): the pass-through identities are granted without the
+# credential being checked, so their routes must be exact and the request body must still
+# pass the proxy's safety checks. Each case below reached the proxy's own deployment key
+# (or an admin route) before.
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/anthropic/v1/messages",  # pass-through route that swaps in the proxy's own key
+        "/anthropic/v1/messages/batches",
+        "/v1/messages/count_tokens",  # counts on the deployment's key, not the caller's
+        "/v1/messages/batches",
+        "/credentials/v1/messages",  # admin route with a catch-all path segment
+        "/key/v1/messages/regenerate",
+    ],
+)
+def test_caller_key_is_honored_on_v1_messages_only(path):
+    request = _starlette_request({"x-api-key": CALLER_KEY}, path)
+    assert _caller_key_pass_through(route=path, request=request) is None
+
+
+@pytest.mark.parametrize(
+    "path, expected",
+    [
+        ("/v1/messages", True),
+        ("/v1/messages/count_tokens", True),
+        ("/anthropic/v1/messages", False),
+        ("/credentials/v1/messages", False),
+        ("/v1/messages/batches", False),
+    ],
+)
+def test_claude_login_pass_through_routes_are_exact(path, expected):
+    from litellm.proxy.auth.user_api_key_auth import _is_claude_login_route
+
+    assert _is_claude_login_route(path) is expected
+
+
+@pytest.mark.asyncio
+async def test_caller_key_identity_is_not_proxy_admin(monkeypatch):
+    monkeypatch.setattr(proxy_server, "general_settings", {})
+    auth = await _user_api_key_auth_builder(
+        request=_starlette_request({"x-api-key": CALLER_KEY}),
+        api_key=CALLER_KEY,
+        azure_api_key_header="",
+        anthropic_api_key_header=CALLER_KEY,
+        google_ai_studio_api_key_header=None,
+        azure_apim_header=None,
+        request_data={},
+    )
+    assert auth.metadata == {"caller_key_pass_through": True}
+    assert auth.user_role != "proxy_admin", "an unchecked credential got admin"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field", ["api_base", "base_url"])
+async def test_caller_key_request_body_cannot_redirect_the_call(monkeypatch, field):
+    monkeypatch.setattr(proxy_server, "general_settings", {})
+    with pytest.raises(Exception, match="not allowed in request body"):
+        await _user_api_key_auth_builder(
+            request=_starlette_request({"x-api-key": CALLER_KEY}),
+            api_key=CALLER_KEY,
+            azure_api_key_header="",
+            anthropic_api_key_header=CALLER_KEY,
+            google_ai_studio_api_key_header=None,
+            azure_apim_header=None,
+            request_data={"model": "claude-haiku-5-5", field: "https://evil.example"},
+        )
+
+
+@pytest.mark.asyncio
+async def test_claude_login_request_body_cannot_redirect_the_call(monkeypatch):
+    monkeypatch.setattr(proxy_server, "general_settings", {})
+    with pytest.raises(Exception, match="not allowed in request body"):
+        await _user_api_key_auth_builder(
+            request=_starlette_request({"authorization": "Bearer sk-ant-oat01-login"}),
+            api_key="sk-ant-oat01-login",
+            azure_api_key_header="",
+            anthropic_api_key_header=None,
+            google_ai_studio_api_key_header=None,
+            azure_apim_header=None,
+            request_data={"model": "claude-haiku-5-5", "api_base": "https://evil.example"},
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "smuggled",
+    [
+        {"oauth_pass_through": True},
+        {"oauth_pass_through": True, "oauth_token": "sk-ant-oat01-forged"},
+        {"caller_key_pass_through": True},
+        {"caller_api_key": "sk-ant-api03-someone-else"},
+    ],
+)
+async def test_body_cannot_set_the_pass_through_markers(smuggled):
+    data = await add_litellm_data_to_request(
+        data={"model": "claude-haiku-5-5", "litellm_params": dict(smuggled)},
+        request=_request({"x-api-key": CALLER_KEY}),
+        user_api_key_dict=UserAPIKeyAuth(api_key="hashed", metadata={}),
+        proxy_config=MagicMock(),
+        general_settings={},
+        version="test-version",
+    )
+    params = data.get("litellm_params") or {}
+    assert params.get("caller_api_key") == CALLER_KEY, "the real caller key still applies"
+    assert not params.get("oauth_pass_through")
+    assert "oauth_token" not in params
+    assert not params.get("caller_key_pass_through"), "only the auth result sets this"

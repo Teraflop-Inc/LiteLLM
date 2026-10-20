@@ -662,13 +662,15 @@ async def add_litellm_data_to_request(  # noqa: PLR0915
 
     ## Cache Controls
     headers = request.headers
-    verbose_proxy_logger.debug("Request Headers: %s", headers)
+    # Header names only: values carry x-api-key and Authorization (caller keys, login tokens).
+    verbose_proxy_logger.debug("Request header names: %s", sorted(headers.keys()))
     cache_control_header = headers.get("Cache-Control", None)
     if cache_control_header:
         cache_dict = parse_cache_control(cache_control_header)
         data["ttl"] = cache_dict.get("s-maxage")
 
-    verbose_proxy_logger.debug("receiving data: %s", data)
+    # Key names only: data["proxy_server_request"]["headers"] holds x-api-key / Authorization.
+    verbose_proxy_logger.debug("receiving data: keys=%s", sorted(data.keys()))
 
     _metadata_variable_name = _get_metadata_variable_name(request)
 
@@ -838,12 +840,20 @@ async def add_litellm_data_to_request(  # noqa: PLR0915
         user_api_key_dict=user_api_key_dict,
     )
 
+    # The pass-through markers come from the auth result only. A request body carrying
+    # `litellm_params.oauth_pass_through` used to switch off the caller-key swap and leave
+    # the deployment's own key in place (review of 2026-10-20).
+    body_params = data.get("litellm_params")
+    if isinstance(body_params, dict):
+        for marker in _PASS_THROUGH_MARKERS:
+            body_params.pop(marker, None)
+
     # OAuth Pass-through Support
     # If user_api_key_dict contains an OAuth token in metadata and oauth_pass_through is enabled,
     # pass the OAuth token as the api_key parameter
     verbose_proxy_logger.debug(
-        "[OAUTH] Checking for OAuth pass-through. user_api_key_dict metadata: %s",
-        getattr(user_api_key_dict, 'metadata', {}) if user_api_key_dict else None
+        "[OAUTH] Checking for OAuth pass-through. metadata keys: %s",
+        sorted((getattr(user_api_key_dict, "metadata", None) or {}).keys()),
     )
     
     if (
@@ -877,7 +887,7 @@ async def add_litellm_data_to_request(  # noqa: PLR0915
         )
     
     verbose_proxy_logger.debug(
-        "[PROXY] returned data from litellm_pre_call_utils: %s", data
+        "[PROXY] returned data from litellm_pre_call_utils: keys=%s", sorted(data.keys())
     )
 
     # Caller-supplied Anthropic API key: a request that passed the proxy's own key
@@ -918,6 +928,14 @@ async def add_litellm_data_to_request(  # noqa: PLR0915
     )
 
     return data
+
+
+_PASS_THROUGH_MARKERS = (
+    "oauth_pass_through",
+    "oauth_token",
+    "caller_api_key",
+    "caller_key_pass_through",
+)
 
 
 def _caller_anthropic_api_key(request: Request) -> Optional[str]:

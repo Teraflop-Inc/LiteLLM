@@ -350,9 +350,31 @@ async def check_api_key_for_custom_headers_or_pass_through_endpoints(
     return api_key
 
 
+# Exact routes, never a substring. Both pass-through identities below are granted without
+# the credential being checked (Anthropic checks it), and `"/v1/messages" in route` also
+# matched /anthropic/v1/messages, a pass-through that swaps in the proxy's own key, and
+# admin routes with a catch-all segment such as /credentials/{name:path} (review of
+# 2026-10-20). count_tokens counts on the deployment's key, so a caller key does not get it.
+_CLAUDE_LOGIN_ROUTES = frozenset({"/v1/messages", "/v1/messages/count_tokens"})
+_CALLER_KEY_ROUTES = frozenset({"/v1/messages"})
+
+
+def _is_claude_login_route(route: str) -> bool:
+    return route in _CLAUDE_LOGIN_ROUTES
+
+
+async def _pass_through_request_checks(request: Request, request_data: dict, route: str) -> None:
+    """The checks a pass-through identity skipped by returning early: body safety (no
+    `api_base`/`base_url`), request size, allowed IPs and routes. As a 400, not a 500."""
+    try:
+        await pre_db_read_auth_checks(request_data=request_data, request=request, route=route)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
 def _caller_key_pass_through(route: str, request: Request) -> Optional[str]:
     """The caller's Anthropic API key, when it is the request's only credential."""
-    if "/v1/messages" not in route:
+    if route not in _CALLER_KEY_ROUTES:
         return None
     if request.headers.get("authorization") or request.headers.get("x-litellm-api-key"):
         return None
@@ -382,7 +404,7 @@ async def _user_api_key_auth_builder(  # noqa: PLR0915
     )
     
     # For /v1/messages endpoint, check if OAuth pass-through should be used
-    if "/v1/messages" in route and auth_header.startswith("Bearer "):
+    if _is_claude_login_route(route) and auth_header.startswith("Bearer "):
         token = auth_header.replace("Bearer ", "")
         
         # Detect OAuth token format (sk-ant-oat01-...)
@@ -397,6 +419,7 @@ async def _user_api_key_auth_builder(  # noqa: PLR0915
             )
             # Add OAuth marker for downstream detection
             oauth_auth.metadata = {"oauth_pass_through": True, "oauth_token": token}
+            await _pass_through_request_checks(request, request_data or {}, route)
             verbose_proxy_logger.debug("[auth] oauth pass-through route=%s", route)
             return oauth_auth
     # Codex signed in with ChatGPT (ENG2-402). Its bearer is a ChatGPT OAuth JWT that only
@@ -428,10 +451,13 @@ async def _user_api_key_auth_builder(  # noqa: PLR0915
     caller_key = _caller_key_pass_through(route=route, request=request)
     if caller_key is not None:
         verbose_proxy_logger.debug("[auth] caller api key pass-through route=%s", route)
+        await _pass_through_request_checks(request, request_data or {}, route)
         caller_auth = UserAPIKeyAuth(
             api_key=hash_token(caller_key),
             user_id="caller-key-user",
-            user_role="proxy_admin",
+            # Not proxy_admin: the key is unchecked here, and Anthropic only checks it on
+            # the one route it is forwarded to.
+            user_role=LitellmUserRoles.INTERNAL_USER,
             end_user_id=get_end_user_id_from_request_body(
                 request_data or {}, dict(request.headers)
             ),
