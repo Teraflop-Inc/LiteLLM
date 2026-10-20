@@ -21,6 +21,7 @@ import litellm
 from litellm._logging import verbose_logger, verbose_proxy_logger
 from litellm._service_logger import ServiceLogging
 from litellm.caching import DualCache
+from litellm.llms.anthropic.common_utils import is_anthropic_api_key
 from litellm.litellm_core_utils.dd_tracing import tracer
 from litellm.proxy._types import *
 from litellm.proxy.auth.auth_checks import (
@@ -356,7 +357,7 @@ def _caller_key_pass_through(route: str, request: Request) -> Optional[str]:
     if request.headers.get("authorization") or request.headers.get("x-litellm-api-key"):
         return None
     key = request.headers.get("x-api-key", "")
-    return key if key.startswith("sk-ant-api") else None
+    return key if is_anthropic_api_key(key) else None
 
 
 async def _user_api_key_auth_builder(  # noqa: PLR0915

@@ -10,6 +10,7 @@ import litellm
 from litellm._logging import verbose_logger, verbose_proxy_logger
 from litellm._service_logger import ServiceLogging
 from litellm.litellm_core_utils.safe_json_loads import safe_json_loads
+from litellm.llms.anthropic.common_utils import is_anthropic_api_key
 from litellm.proxy._types import (
     AddTeamCallback,
     CommonProxyErrors,
@@ -924,7 +925,7 @@ def _caller_anthropic_api_key(request: Request) -> Optional[str]:
     if "/v1/messages" not in request.url.path:
         return None
     key = request.headers.get("x-api-key", "")
-    return key if key.startswith("sk-ant-api") else None
+    return key if is_anthropic_api_key(key) else None
 
 
 def _update_model_if_team_alias_exists(

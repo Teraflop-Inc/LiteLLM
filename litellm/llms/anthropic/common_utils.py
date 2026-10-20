@@ -16,6 +16,15 @@ from litellm.types.llms.anthropic import AllAnthropicToolsValues, AnthropicMcpSe
 from litellm.types.llms.openai import AllMessageValues
 from litellm.types.utils import TokenCountResponse
 
+# Console API keys: workspace keys (`sk-ant-api...`) and the identity-backed personal
+# (`sk-ant-usr...`) and service account (`sk-ant-svc...`) keys. Not OAuth tokens
+# (`sk-ant-oat...`) or Admin keys (`sk-ant-admin...`).
+ANTHROPIC_API_KEY_PREFIXES = ("sk-ant-api", "sk-ant-usr", "sk-ant-svc")
+
+
+def is_anthropic_api_key(key: Optional[str]) -> bool:
+    return key is not None and key.startswith(ANTHROPIC_API_KEY_PREFIXES)
+
 
 class AnthropicError(BaseLLMException):
     def __init__(
