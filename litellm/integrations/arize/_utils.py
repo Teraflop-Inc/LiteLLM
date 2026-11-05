@@ -193,6 +193,9 @@ def build_single_message_attributes(
     }
 
 
+_MAX_TRAILING_USER = 8
+
+
 def handle_anthropic_claude_code_tracing(
     tracer: Tracer,
     parent_span: Span,
@@ -214,6 +217,22 @@ def handle_anthropic_claude_code_tracing(
     # Starting from the tail caps each loop at one or two iterations, keeping the
     # latest-turn detail Phoenix users want without re-emitting prior history.
     start_idx = max(0, len(messages) - 2)
+    # ENG2-1765: Claude Code can append user messages after the tool results (system
+    # reminders, deferred-tool notices), which pushed the assistant's tool_use out of a
+    # two-message window: those turns lost every tool span. Start at the last assistant
+    # message instead, so the window is still one turn: that message and the user
+    # messages after it. Look back at most _MAX_TRAILING_USER messages, so a client that sends
+    # long runs of user messages can't widen the window without bound.
+    last_assistant = next(
+        (
+            j
+            for j in range(len(messages) - 1, max(-1, len(messages) - 2 - _MAX_TRAILING_USER), -1)
+            if isinstance(messages[j], dict) and messages[j].get("role") == "assistant"
+        ),
+        None,
+    )
+    if last_assistant is not None and last_assistant < start_idx:
+        start_idx = last_assistant
 
     # Build internal prompt span data
     i = start_idx
