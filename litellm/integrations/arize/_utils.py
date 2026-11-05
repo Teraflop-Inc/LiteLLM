@@ -193,6 +193,9 @@ def build_single_message_attributes(
     }
 
 
+_MAX_TRAILING_USER = 8
+
+
 def handle_anthropic_claude_code_tracing(
     tracer: Tracer,
     parent_span: Span,
@@ -218,9 +221,14 @@ def handle_anthropic_claude_code_tracing(
     # reminders, deferred-tool notices), which pushed the assistant's tool_use out of a
     # two-message window: those turns lost every tool span. Start at the last assistant
     # message instead, so the window is still one turn: that message and the user
-    # messages after it.
+    # messages after it. Look back at most _MAX_TRAILING_USER messages, so a client that sends
+    # long runs of user messages can't widen the window without bound.
     last_assistant = next(
-        (j for j in range(len(messages) - 1, -1, -1) if messages[j].get("role") == "assistant"),
+        (
+            j
+            for j in range(len(messages) - 1, max(-1, len(messages) - 2 - _MAX_TRAILING_USER), -1)
+            if isinstance(messages[j], dict) and messages[j].get("role") == "assistant"
+        ),
         None,
     )
     if last_assistant is not None and last_assistant < start_idx:

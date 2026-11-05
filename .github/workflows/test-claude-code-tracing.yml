@@ -1,0 +1,31 @@
+# The Claude Code tracing tests (the spans DAL reads). test-litellm.yml runs only on PRs into
+# main, and this fork's PRs go into oauth-passthrough-support, so nothing else runs them.
+# The test loads this checkout's _utils.py by path, with PyPI litellm for its imports.
+name: Claude Code tracing tests
+
+on:
+  pull_request:
+    branches: [oauth-passthrough-support]
+    paths:
+      - "litellm/integrations/arize/**"
+      - "tests/test_litellm/integrations/arize/test_claude_code_*.py"
+      - ".github/workflows/test-claude-code-tracing.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v6
+      - name: Run the tests
+        working-directory: tests/test_litellm/integrations/arize
+        run: >-
+          uv run --no-project --python 3.12 --with "litellm>=1.75,<1.76" --with opentelemetry-sdk
+          --with openinference-semantic-conventions --with pytest
+          pytest -q -p no:cacheprovider test_claude_code_tool_window.py
