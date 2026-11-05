@@ -214,6 +214,17 @@ def handle_anthropic_claude_code_tracing(
     # Starting from the tail caps each loop at one or two iterations, keeping the
     # latest-turn detail Phoenix users want without re-emitting prior history.
     start_idx = max(0, len(messages) - 2)
+    # ENG2-1765: Claude Code can append user messages after the tool results (system
+    # reminders, deferred-tool notices), which pushed the assistant's tool_use out of a
+    # two-message window: those turns lost every tool span. Start at the last assistant
+    # message instead, so the window is still one turn: that message and the user
+    # messages after it.
+    last_assistant = next(
+        (j for j in range(len(messages) - 1, -1, -1) if messages[j].get("role") == "assistant"),
+        None,
+    )
+    if last_assistant is not None and last_assistant < start_idx:
+        start_idx = last_assistant
 
     # Build internal prompt span data
     i = start_idx
