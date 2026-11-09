@@ -231,6 +231,13 @@ class AnthropicMessagesRequestOptionalParams(TypedDict, total=False):
     top_k: Optional[int]
     top_p: Optional[float]
     mcp_servers: Optional[List[AnthropicMcpServerTool]]
+    # ENG2-1773: this TypedDict is the /v1/messages allowlist, so a field missing here is
+    # dropped silently. Claude Code sends the first two on every request.
+    context_management: Optional[Dict]
+    output_config: Optional[Dict]
+    container: Optional[Union[str, Dict]]
+    service_tier: Optional[str]
+    thread: Optional[Dict]
 
 
 class AnthropicMessagesRequest(AnthropicMessagesRequestOptionalParams, total=False):
